@@ -1,22 +1,26 @@
 #!/bin/bash
 
 # --- Environment Setup ---
-# This script requires uv and a Python 3.11 virtual environment with xpk installed.
-# If you haven't set up uv and the environment, please refer to the README.md.
+# This script requires the Cluster Toolkit (gcluster) CLI (v1.104.0).
+# If you haven't installed gcluster, please refer to the README.md.
 
-UV_VENV_PATH="${HOME}/.local/bin/venv"
-UV_PYTHON_VERSION="3.11"
-
-# Activate the virtual environment
-source "${UV_VENV_PATH}/bin/activate"
-
-# Check if xpk is installed in the venv
-if ! pip show xpk &> /dev/null; then
-    echo "xpk not found in the virtual environment. Please install it by running:"
-    echo "pip install xpk==1.8.0"
+export PATH="${HOME}/cluster-toolkit:${PATH}"
+CTK_VERSION="1.104.0"
+GCLUSTER_BIN="${GCLUSTER_BIN:-gcluster}"
+if ! command -v "${GCLUSTER_BIN}" &> /dev/null && [[ ! -x "${GCLUSTER_BIN}" ]]; then
+    echo "gcluster not found. Please install Cluster Toolkit v${CTK_VERSION} by running:"
+    echo "  mkdir -p \${HOME}/cluster-toolkit"
+    echo "  curl -Lo /tmp/gcluster_bundle.tgz https://github.com/GoogleCloudPlatform/cluster-toolkit/releases/download/v${CTK_VERSION}/gcluster_bundle_linux_amd64.tgz"
+    echo "  tar -xzf /tmp/gcluster_bundle.tgz -C \${HOME}/cluster-toolkit gcluster"
+    echo "  rm -f /tmp/gcluster_bundle.tgz"
+    echo "  chmod +x \${HOME}/cluster-toolkit/gcluster"
+    echo "  export PATH=\"\${HOME}/cluster-toolkit:\${PATH}\""
     exit 1
 fi
 # --- End Environment Setup ---
+
+set -e
+set -o pipefail
 
 # --- Configuration ---
 # Before running this script, please modify the environment variables below
@@ -29,9 +33,15 @@ export CLUSTER_NAME=""
 export ZONE=""
 export BASE_OUTPUT_DIR=""
 export WORKLOAD_IMAGE=""
-export WORKLOAD_NAME="$(printf "%.26s" "${USER//_/-}-deepseekv3-671b-4096-fsdp-gcs")-$(date +%Y%m%d-%H%M)"
-export DATASET_VOLUME_NAME="dataset-gcsfuse-volume"
+export WORKLOAD_NAME="${WORKLOAD_NAME:-$(printf "%.11s" "${USER//_/-}")-dsv3-gcs-$(date +%H%M)}"
+
+# Name of the PersistentVolumeClaim backed by the dataset bucket, and the path
+# it is mounted at inside the container. Under XPK this was an `xpk storage`
+# object; gcluster mounts the PVC directly, so this must match
+# `metadata.name` of the PersistentVolumeClaim in `dataset_pvc.yaml`.
+export DATASET_VOLUME_NAME="dataset-bucket-pvc"
 export DATASET_BUCKET_MOUNTED_PATH="/tmp/dataset"
+
 
 # XLA Flags
 XLA_FLAGS=" \
@@ -120,19 +130,26 @@ checkpoint_period=25 \
 base_output_directory=${BASE_OUTPUT_DIR} \
 run_name=${WORKLOAD_NAME}"
 
-xpk workload create \
-  --cluster=$CLUSTER_NAME \
-  --project=$PROJECT_ID \
-  --zone=$ZONE \
-  --priority=very-high \
-  --max-restarts=0 \
-  --tpu-type=tpu7x-4x8x8 \
-  --num-slices=1 \
-  --base-docker-image="${WORKLOAD_IMAGE}" \
-  --enable-debug-logs \
-  --workload=$WORKLOAD_NAME \
-  --storage=$DATASET_VOLUME_NAME \
-  --command="set -e && \
+
+echo "=== Creating Cluster Toolkit Workload: $WORKLOAD_NAME ==="
+"${GCLUSTER_BIN}" job submit \
+  --skip-prereqs \
+  --queue multislice-queue \
+  --cluster "$CLUSTER_NAME" \
+  --project "$PROJECT_ID" \
+  --location "$ZONE" \
+  --priority medium \
+  --restarts 0 \
+  --compute-type tpu7x \
+  --topology 4x8x8 \
+  --num-slices 1 \
+  --base-image "${WORKLOAD_IMAGE}" \
+  --build-context "." \
+  --mount "${DATASET_VOLUME_NAME};${DATASET_BUCKET_MOUNTED_PATH};ro" \
+  --verbose \
+  --gke-namespace default \
+  --name "${WORKLOAD_NAME}" \
+  --command "set -e && \
     export LIBTPU_INIT_ARGS='${XLA_FLAGS}' && \
     export ENABLE_PATHWAYS_PERSISTENCE=1 && \
     export JAX_PLATFORMS=tpu,cpu && \
