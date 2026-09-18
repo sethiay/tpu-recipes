@@ -195,9 +195,9 @@ process.
 
 The following software versions are used:
 
--   Libtpu version: 0.0.40 or nightly
--   Jax version: 0.10.0 or nightly
--   MaxDiffusion version: git+https://github.com/AI-Hypercomputer/maxdiffusion.git
+-   Libtpu version: 0.0.40
+-   Jax version: 0.10.0
+-   MaxDiffusion version: 7cfb880
 -   Python: 3.12
 -   Cluster Toolkit: 1.104.0
 
@@ -209,9 +209,10 @@ export CLOUD_IMAGE_NAME="${USER}-maxdiffusion-runner"
 export WORKLOAD_IMAGE="${CONTAINER_REGISTRY}/${PROJECT_ID}/${CLOUD_IMAGE_NAME}"
 export PROJECT_ID=<YOUR_PROJECT_ID>
 
-# Clone MaxDiffusion Repository
+# Clone MaxDiffusion Repository and checkout recipe commit
 git clone https://github.com/AI-Hypercomputer/maxdiffusion.git
 cd maxdiffusion
+git checkout 7cfb880
 
 # Build and upload the docker image
 bash docker_build_dependency_image.sh
